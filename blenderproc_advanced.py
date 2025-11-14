@@ -1,30 +1,25 @@
-#!/usr/bin/env python3
-"""
-BlenderProc 고급 실습 - YOLO 학습용 데이터셋 구축
-BOP 객체와 다중 뷰포인트를 활용한 합성 데이터 생성
-"""
-
 import blenderproc as bproc
+
 import numpy as np
 import argparse
 import os
-import json
-from pathlib import Path
+import time
+import glob
 
 # 커맨드 라인 인자
-parser = argparse.ArgumentParser(description='BlenderProc YOLO 데이터셋 생성')
+parser = argparse.ArgumentParser(description='BlenderProc 고급 실습')
 parser.add_argument('--num_scenes', type=int, default=10, help='생성할 씬 수')
-parser.add_argument('--num_cameras_per_scene', type=int, default=10, help='씬당 카메라 포즈 수')
-parser.add_argument('--output_dir', type=str, default='output_yolo', help='출력 디렉토리')
+parser.add_argument('--num_cameras_per_scene', type=int, default=3, help='씬당 카메라 뷰 수')
+parser.add_argument('--resolution', type=int, default=512, help='렌더링 해상도')
 args = parser.parse_args()
 
 print("=" * 50)
-print("BlenderProc YOLO 데이터셋 생성")
+print("BlenderProc 고급 실습")
 print("로봇 비전 데이터셋 구축")
 print("=" * 50)
 print(f"씬 수: {args.num_scenes}")
-print(f"씬당 카메라 포즈: {args.num_cameras_per_scene}")
-print(f"총 이미지 수: {args.num_scenes * args.num_cameras_per_scene}")
+print(f"씬당 카메라: {args.num_cameras_per_scene}")
+print(f"해상도: {args.resolution}x{args.resolution}")
 print()
 
 # ====================================
@@ -37,463 +32,391 @@ print("✓ BlenderProc 초기화 완료")
 # ====================================
 # 2. 출력 디렉토리 설정
 # ====================================
-output_dir = Path(args.output_dir)
-images_dir = output_dir / "images"
-labels_dir = output_dir / "labels"
-images_dir.mkdir(parents=True, exist_ok=True)
-labels_dir.mkdir(parents=True, exist_ok=True)
-
-# YOLO 클래스 정의 (BOP YCB-V 객체)
-class_names = [
-    "002_master_chef_can",
-    "003_cracker_box", 
-    "004_sugar_box",
-    "005_tomato_soup_can",
-    "006_mustard_bottle",
-    "007_tuna_fish_can",
-    "008_pudding_box",
-    "009_gelatin_box",
-    "010_potted_meat_can",
-    "011_banana"
-]
-
-# classes.txt 저장
-with open(output_dir / "classes.txt", "w") as f:
-    for name in class_names:
-        f.write(f"{name}\n")
-
+output_dir = os.path.join(os.path.dirname(__file__), "blenderproc_output", "advanced_dataset")
+os.makedirs(output_dir, exist_ok=True)
 print(f"✓ 출력 디렉토리: {output_dir}")
-print(f"✓ YOLO 클래스 수: {len(class_names)}")
 
 # ====================================
-# 3. BOP 데이터셋 경로 확인
+# 3. 조명 설정 (고급 3-point lighting)
 # ====================================
-print("\n[Step 2] BOP YCB-V 데이터셋 확인 중...")
+print("[Step 2] 고급 조명 시스템 구성 중...")
 
-# BOP YCB-V 데이터셋 경로 (blenderproc download ycbv로 다운로드된 경로)
-bop_parent_path = os.path.join(os.path.dirname(__file__), "resources", "bop")
-bop_dataset_name = "ycbv"
-bop_dataset_path = os.path.join(bop_parent_path, bop_dataset_name)
+# Key Light (주 조명) - 강한 방향성 조명
+key_light = bproc.types.Light()
+key_light.set_type("SUN")
+key_light.set_location([2, -2, 3])
+key_light.set_rotation_euler([-0.785, 0, -0.785])  # -45도, 0도, -45도 (라디안)
+key_light.set_energy(2.0)
 
-if not os.path.exists(bop_dataset_path):
-    print(f"⚠️  BOP YCB-V 데이터셋을 찾을 수 없습니다: {bop_dataset_path}")
-    print("다음 명령으로 다운로드하세요: blenderproc download ycbv")
-    exit(1)
+# Fill Light (보조 조명) - 부드러운 보조광
+fill_light = bproc.types.Light()
+fill_light.set_type("SUN")
+fill_light.set_location([-2, 2, 2.5])
+fill_light.set_rotation_euler([-0.611, 0, 0.785])  # -35도, 0도, 45도
+fill_light.set_energy(0.8)
 
-print(f"✓ BOP 데이터셋 경로: {bop_dataset_path}")
-
-# ====================================
-# 4. 환경 구성 (테이블과 배경)
-# ====================================
-print("\n[Step 3] 환경 구성 중...")
-
-# 지면 (바닥)
-ground = bproc.object.create_primitive('PLANE', scale=[5, 5, 1])
-ground.set_location([0, 0, 0])
-ground.set_cp("category_id", 0)  # 배경
-
-# 테이블 (작업 공간)
-table = bproc.object.create_primitive('CUBE', scale=[0.8, 0.8, 0.05])
-table.set_location([0, 0, 0.35])
-table.set_cp("category_id", 0)  # 배경
-
-print("✓ 환경 구성 완료 (지면, 테이블)")
-
-# ====================================
-# 5. 조명 설정
-# ====================================
-print("\n[Step 4] 조명 시스템 구성 중...")
-
-# Key Light (주 조명)
-light_key = bproc.types.Light()
-light_key.set_type("SUN")
-light_key.set_location([2, -2, 3])
-light_key.set_energy(1.5)
-
-# Fill Light (보조 조명)
-light_fill = bproc.types.Light()
-light_fill.set_type("SUN") 
-light_fill.set_location([-2, 2, 2])
-light_fill.set_energy(0.8)
-
-# Rim Light (윤곽 조명)
-light_rim = bproc.types.Light()
-light_rim.set_type("POINT")
-light_rim.set_location([0, 0, 2])
-light_rim.set_energy(300)
+# Ambient Light (환경광) - HDRI 대신 반구 조명
+ambient_light = bproc.types.Light()
+ambient_light.set_type("AREA")
+ambient_light.set_location([0, 0, 5])
+ambient_light.set_rotation_euler([0, 0, 0])
+ambient_light.set_energy(100)
+ambient_light.blender_obj.data.size = 10
 
 print("✓ 3-point 조명 시스템 완료")
 
 # ====================================
-# 6. 카메라 설정
+# 4. 환경 구성
 # ====================================
-print("\n[Step 5] 카메라 설정 중...")
+print("[Step 3] 환경 구성 중...")
 
-# 카메라 해상도 설정 (YOLO 입력 크기)
-bproc.camera.set_resolution(640, 640)
+# 지면 (plane)
+ground = bproc.object.create_primitive('PLANE', scale=[10, 10, 1], location=[0, 0, 0])
+ground.set_name("GroundPlane")
+ground.set_cp("category_id", 0)  # 배경으로 설정
 
-# BOP 데이터셋의 intrinsics 로드
-bproc.loader.load_bop_intrinsics(bop_dataset_path=bop_dataset_path)
+# 지면 재질 설정
+ground_mat = bproc.material.create('GroundMaterial')
+ground_mat.set_principled_shader_value("Base Color", [0.8, 0.8, 0.8, 1.0])
+ground_mat.set_principled_shader_value("Roughness", 0.8)
+ground.replace_materials(ground_mat)
 
-print("✓ 카메라 설정 완료 (640x640)")
+# 테이블 (작업 공간)
+table = bproc.object.create_primitive(
+    'CUBE',
+    scale=[0.8, 0.8, 0.05],
+    location=[0.5, 0.0, 0.35]
+)
+table.set_name("Table")
+table.set_cp("category_id", 0)  # 배경으로 설정
+
+# 테이블 재질 설정
+table_mat = bproc.material.create('TableMaterial')
+table_mat.set_principled_shader_value("Base Color", [0.5, 0.5, 0.5, 1.0])
+table_mat.set_principled_shader_value("Roughness", 0.6)
+table.replace_materials(table_mat)
+
+# 테이블과 지면을 움직이지 않도록 설정
+table.enable_rigidbody(False)
+ground.enable_rigidbody(False)
+
+print("✓ 환경 구성 완료")
+
+# ====================================
+# 5. YCB 객체 로드
+# ====================================
+print("[Step 4] YCB 객체 로드 중...")
+
+# YCB OBJ 파일 경로
+ycb_dir = os.path.join(os.path.dirname(__file__), "ycb_obj")
+
+# YCB 객체 정의
+ycb_objects_info = [
+    {
+        "name": "PottedMeatCan",
+        "file": "010_potted_meat_can.obj",
+        "position": [0.5, 0.0, 0.42],
+        "rotation": [90, 0, 0],  # X축 90도 회전 (OBJ는 다른 축 방향)
+        "scale": [1.0, 1.0, 1.0],
+        "category_id": 1
+    },
+    {
+        "name": "Banana",
+        "file": "011_banana.obj",
+        "position": [0.4, 0.15, 0.42],
+        "rotation": [0, 0, 0],
+        "scale": [1.0, 1.0, 1.0],
+        "category_id": 2
+    },
+    {
+        "name": "LargeMarker",
+        "file": "040_large_marker.obj",
+        "position": [0.6, -0.15, 0.42],
+        "rotation": [0, 0, 0],
+        "scale": [1.0, 1.0, 1.0],
+        "category_id": 3
+    },
+    {
+        "name": "TomatoSoupCan",
+        "file": "005_tomato_soup_can.obj",
+        "position": [0.35, -0.1, 0.42],
+        "rotation": [0, 0, 0],
+        "scale": [1.0, 1.0, 1.0],
+        "category_id": 4
+    }
+]
+
+# YCB 객체 로드
+ycb_objects = []
+for obj_info in ycb_objects_info:
+    obj_path = os.path.join(ycb_dir, obj_info["file"])
+    
+    if os.path.exists(obj_path):
+        # OBJ 파일 로드
+        loaded_objs = bproc.loader.load_obj(obj_path)
+        
+        for obj in loaded_objs:
+            obj.set_name(obj_info["name"])
+            obj.set_location(obj_info["position"])
+            obj.set_rotation_euler([np.deg2rad(r) for r in obj_info["rotation"]])
+            obj.set_scale(obj_info["scale"])
+            
+            # 카테고리 ID 설정 (세그멘테이션용)
+            obj.set_cp("category_id", obj_info["category_id"])
+            
+            # 물리 속성 활성화
+            obj.enable_rigidbody(True, mass=0.1, friction=1.0, linear_damping=0.99, angular_damping=0.99)
+            
+            ycb_objects.append(obj)
+            
+        print(f"  ✓ {obj_info['name']} 로드 및 설정 완료")
+    else:
+        print(f"  ✗ {obj_info['name']} 파일을 찾을 수 없음: {obj_path}")
+
+print(f"✓ YCB 객체 로드 완료 (총 {len(ycb_objects)}개)")
+
+# ====================================
+# 6. 물리 시뮬레이션 설정
+# ====================================
+print("[Step 5] 물리 시뮬레이션 설정 중...")
+
+# 물리 시뮬레이션 설정
+bproc.object.simulate_physics_and_fix_final_poses(
+    min_simulation_time=0.5,
+    max_simulation_time=2.0,
+    check_object_interval=0.25
+)
+
+print("✓ 물리 시뮬레이션 설정 완료")
 
 # ====================================
 # 7. 렌더링 설정
 # ====================================
-print("\n[Step 6] 렌더링 설정 중...")
+print("[Step 6] 렌더링 설정 중...")
 
-# RGB, Depth, Segmentation 활성화
-bproc.renderer.enable_depth_output(activate_antialiasing=False)
+# 렌더링 품질 설정
+bproc.renderer.set_max_amount_of_samples(128)
+bproc.renderer.set_output_format(enable_transparency=False)
+bproc.renderer.set_light_bounces(
+    diffuse_bounces=3,
+    glossy_bounces=3,
+    max_bounces=3,
+    transmission_bounces=3,
+    transparent_max_bounces=3
+)
+
+# 세그멘테이션 및 깊이 출력 활성화
 bproc.renderer.enable_segmentation_output(
     map_by=["category_id", "instance", "name"],
     default_values={"category_id": 0}
 )
-
-# 렌더링 품질 설정
-bproc.renderer.set_max_amount_of_samples(50)
+bproc.renderer.enable_depth_output(activate_antialiasing=False)
+bproc.renderer.enable_normals_output()
 
 print("✓ 렌더링 설정 완료")
 
 # ====================================
-# 8. 데이터 생성 루프
+# 8. 데이터 생성 루프 (도메인 랜덤화)
 # ====================================
 print(f"\n{'='*50}")
-print("[YOLO 데이터셋 생성 시작]")
+print("[고급 데이터셋 생성 시작]")
+print("="*50)
+print(f"총 {args.num_scenes}개 씬 x {args.num_cameras_per_scene}개 카메라 = {args.num_scenes * args.num_cameras_per_scene}개 이미지")
+
+start_time = time.time()
+
+for scene_idx in range(args.num_scenes):
+    print(f"\n[Scene {scene_idx + 1}/{args.num_scenes}]")
+    
+    # ================================
+    # 도메인 랜덤화 적용
+    # ================================
+    
+    # 1. YCB 객체 위치와 회전 랜덤화
+    for obj in ycb_objects:
+        # 테이블 위의 랜덤한 위치
+        random_pos = np.random.uniform([0.3, -0.25, 0.42], [0.7, 0.25, 0.6])
+        obj.set_location(random_pos)
+        
+        # 랜덤한 회전
+        random_rot = np.random.uniform([0, 0, 0], [360, 360, 360])
+        obj.set_rotation_euler([np.deg2rad(r) for r in random_rot])
+    
+    # 물리 시뮬레이션으로 자연스러운 배치
+    bproc.object.simulate_physics_and_fix_final_poses(
+        min_simulation_time=0.5,
+        max_simulation_time=1.0,
+        check_object_interval=0.25
+    )
+    
+    # 2. 조명 강도 랜덤화
+    key_light.set_energy(np.random.uniform(1.5, 3.0))
+    fill_light.set_energy(np.random.uniform(0.5, 1.5))
+    ambient_light.set_energy(np.random.uniform(50, 150))
+    
+    # 3. 조명 방향 랜덤화
+    key_rotation = np.random.uniform([-0.873, -0.1, -0.873], [-0.698, 0.1, -0.698])
+    key_light.set_rotation_euler(key_rotation)
+    
+    # 4. 테이블 색상 랜덤화
+    random_table_color = np.random.uniform([0.3, 0.3, 0.3], [0.8, 0.8, 0.8])
+    table_mat.set_principled_shader_value("Base Color", [*random_table_color, 1.0])
+    
+    # ================================
+    # 다중 카메라 뷰포인트 생성
+    # ================================
+    
+    for cam_idx in range(args.num_cameras_per_scene):
+        
+        if cam_idx == 0:
+            # 메인 카메라 - 랜덤한 각도에서 테이블을 바라봄
+            cam_position = np.random.uniform([0.8, 0.8, 0.6], [1.4, 1.4, 1.2])
+            poi = np.array([0.5, 0.0, 0.45])  # Point of Interest (테이블 중심)
+            
+            rotation_matrix = bproc.camera.rotation_from_forward_vec(
+                poi - cam_position,
+                inplane_rot=np.random.uniform(-0.2, 0.2)
+            )
+            
+            cam_matrix = bproc.math.build_transformation_mat(cam_position, rotation_matrix)
+            bproc.camera.add_camera_pose(cam_matrix)
+            
+        elif cam_idx == 1:
+            # 탑뷰 카메라 - 위에서 내려다봄
+            cam_position = np.array([0.5, 0.0, 1.5])
+            poi = np.array([0.5, 0.0, 0.45])
+            
+            rotation_matrix = bproc.camera.rotation_from_forward_vec(poi - cam_position)
+            cam_matrix = bproc.math.build_transformation_mat(cam_position, rotation_matrix)
+            bproc.camera.add_camera_pose(cam_matrix)
+            
+        else:
+            # 사이드 카메라 - 옆에서 바라봄
+            cam_position = np.array([1.5, 0.0, 0.6])
+            poi = np.array([0.5, 0.0, 0.45])
+            
+            rotation_matrix = bproc.camera.rotation_from_forward_vec(poi - cam_position)
+            cam_matrix = bproc.math.build_transformation_mat(cam_position, rotation_matrix)
+            bproc.camera.add_camera_pose(cam_matrix)
+
+print(f"\n✓ {args.num_scenes}개 씬, {args.num_scenes * args.num_cameras_per_scene}개 카메라 포즈 생성 완료")
+
+# ====================================
+# 9. 렌더링 실행
+# ====================================
+print(f"\n{'='*50}")
+print("[렌더링 시작]")
 print("="*50)
 
-# BOP 객체 ID (YCB-V에서 사용할 객체들)
-obj_ids_to_use = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]  # 10개 객체
+# 렌더링 실행
+data = bproc.renderer.render()
 
-frame_id = 0
+# ====================================
+# 10. 데이터 저장
+# ====================================
+print(f"\n[데이터 저장 중...]")
 
-for scene_id in range(args.num_scenes):
-    print(f"\n[Scene {scene_id + 1}/{args.num_scenes}]")
-    
-    # ====================================
-    # 8-1. BOP 객체 로드 (씬마다 다르게)
-    # ====================================
-    print("  - BOP 객체 로드 중...")
-    
-    # 이전 씬의 객체 제거
-    if scene_id > 0:
-        for obj in bop_objs:
-            obj.delete()
-    
-    # 랜덤하게 3-6개 객체 선택
-    num_objects = np.random.randint(3, 7)
-    selected_obj_ids = np.random.choice(obj_ids_to_use, size=num_objects, replace=False)
-    
-    # BOP 객체 로드
-    bop_objs = bproc.loader.load_bop_objs(
-        bop_dataset_path=bop_dataset_path,
-        mm2m=True,
-        obj_ids=selected_obj_ids.tolist()
-    )
-    
-    # 각 객체에 category_id 설정 (YOLO 클래스)
-    for obj in bop_objs:
-        obj_id = obj.get_cp("bop_dataset_name")
-        # BOP obj_id에서 YOLO class_id로 매핑
-        class_id = obj.get_cp("category_id")
-        obj.set_cp("category_id", class_id)
-        obj.set_shading_mode('auto')
-    
-    print(f"    ✓ {len(bop_objs)}개 객체 로드 완료")
-    
-    # ====================================
-    # 8-2. 객체 위치 샘플링 (도메인 랜덤화)
-    # ====================================
-    print("  - 객체 위치 랜덤화 중...")
-    
-    # 테이블 위에 객체 배치 함수
-    def sample_pose_on_table(obj: bproc.types.MeshObject):
-        # 테이블 위 랜덤 위치 (x: -0.3~0.3, y: -0.3~0.3, z: 0.4~0.6)
-        obj.set_location(np.random.uniform([-0.3, -0.3, 0.42], [0.3, 0.3, 0.6]))
-        # 랜덤 회전
-        obj.set_rotation_euler(bproc.sampler.uniformSO3())
-    
-    # 충돌 검사와 함께 객체 위치 샘플링
-    bproc.object.sample_poses(
-        objects_to_sample=bop_objs,
-        sample_pose_func=sample_pose_on_table,
-        max_tries=1000
-    )
-    
-    print("    ✓ 객체 위치 샘플링 완료")
-    
-    # ====================================
-    # 8-3. 조명 랜덤화
-    # ====================================
-    print("  - 조명 랜덤화 중...")
-    
-    # Key Light 에너지 랜덤화
-    light_key.set_energy(np.random.uniform(1.0, 2.5))
-    
-    # Fill Light 에너지 랜덤화
-    light_fill.set_energy(np.random.uniform(0.5, 1.5))
-    
-    # Point Light 위치와 에너지 랜덤화
-    light_rim.set_location(bproc.sampler.shell(
-        center=[0, 0, 0.5],
-        radius_min=1.0,
-        radius_max=2.0,
-        elevation_min=30,
-        elevation_max=89
-    ))
-    light_rim.set_energy(np.random.uniform(200, 500))
-    
-    print("    ✓ 조명 랜덤화 완료")
-    
-    # ====================================
-    # 8-4. 배경 색상 랜덤화
-    # ====================================
-    print("  - 배경 랜덤화 중...")
-    
-    # 테이블 재질 랜덤화
-    table_material = table.get_materials()[0]
-    table_material.set_principled_shader_value(
-        "Base Color", 
-        np.random.uniform([0.3, 0.3, 0.3, 1], [0.8, 0.8, 0.8, 1])
-    )
-    
-    # 바닥 재질 랜덤화
-    ground_material = ground.get_materials()[0]
-    ground_material.set_principled_shader_value(
-        "Base Color",
-        np.random.uniform([0.2, 0.2, 0.2, 1], [0.6, 0.6, 0.6, 1])
-    )
-    
-    print("    ✓ 배경 랜덤화 완료")
-    
-    # ====================================
-    # 8-5. 카메라 포즈 샘플링
-    # ====================================
-    print(f"  - {args.num_cameras_per_scene}개 카메라 포즈 샘플링 중...")
-    
-    # BVH 트리 생성 (카메라 장애물 검사용)
-    bop_bvh_tree = bproc.object.create_bvh_tree_multi_objects(bop_objs)
-    
-    camera_poses = 0
-    attempts = 0
-    max_attempts = args.num_cameras_per_scene * 100
-    
-    while camera_poses < args.num_cameras_per_scene and attempts < max_attempts:
-        attempts += 1
-        
-        # 구면 좌표계로 카메라 위치 샘플링
-        location = bproc.sampler.shell(
-            center=[0, 0, 0.5],
-            radius_min=0.8,
-            radius_max=1.5,
-            elevation_min=20,
-            elevation_max=80,
-            uniform_volume=False
-        )
-        
-        # POI (Point of Interest) 계산: 객체들의 중심
-        poi = bproc.object.compute_poi(bop_objs)
-        
-        # 카메라가 POI를 바라보도록 회전 행렬 계산
-        rotation_matrix = bproc.camera.rotation_from_forward_vec(
-            poi - location,
-            inplane_rot=np.random.uniform(-0.7854, 0.7854)  # ±45도
-        )
-        
-        # 카메라 포즈 행렬 생성
-        cam2world_matrix = bproc.math.build_transformation_mat(location, rotation_matrix)
-        
-        # 장애물 검사: 카메라와 객체 사이에 최소 0.3m 거리 확보
-        if bproc.camera.perform_obstacle_in_view_check(
-            cam2world_matrix, 
-            {"min": 0.3}, 
-            bop_bvh_tree
-        ):
-            bproc.camera.add_camera_pose(cam2world_matrix)
-            camera_poses += 1
-    
-    if camera_poses < args.num_cameras_per_scene:
-        print(f"    ⚠️  경고: {camera_poses}/{args.num_cameras_per_scene}개 카메라 포즈만 생성됨")
-    else:
-        print(f"    ✓ {camera_poses}개 카메라 포즈 샘플링 완료")
-    
-    # ====================================
-    # 8-6. 렌더링
-    # ====================================
-    print("  - 렌더링 중...")
-    data = bproc.renderer.render()
-    
-    # ====================================
-    # 8-7. YOLO 형식으로 저장
-    # ====================================
-    print("  - YOLO 형식으로 저장 중...")
-    
-    # 각 카메라 프레임에 대해
-    for cam_idx in range(len(data["colors"])):
-        # RGB 이미지 저장
-        img_filename = f"{frame_id:06d}.png"
-        img_path = images_dir / img_filename
-        
-        import cv2
-        cv2.imwrite(str(img_path), data["colors"][cam_idx][..., ::-1])  # RGB to BGR
-        
-        # YOLO 라벨 생성
-        label_filename = f"{frame_id:06d}.txt"
-        label_path = labels_dir / label_filename
-        
-        # Instance segmentation에서 객체별 바운딩 박스 추출
-        instance_segmap = data["instance_segmaps"][cam_idx]
-        instance_attribute_map = data["instance_attribute_maps"][cam_idx]
-        
-        # 이미지 크기
-        h, w = instance_segmap.shape
-        
-        yolo_labels = []
-        
-        # 각 인스턴스에 대해
-        for instance_id in np.unique(instance_segmap):
-            if instance_id == 0:  # 배경 제외
-                continue
-            
-            # 해당 인스턴스의 마스크
-            mask = (instance_segmap == instance_id)
-            
-            # category_id 가져오기
-            if instance_id < len(instance_attribute_map):
-                category_id = instance_attribute_map[instance_id]["category_id"]
-                
-                # 배경(category_id=0) 제외
-                if category_id == 0:
-                    continue
-                
-                # YOLO class_id (0-based index)
-                class_id = category_id - 1  # BOP category_id는 1부터 시작
-                
-                if class_id < 0 or class_id >= len(class_names):
-                    continue
-                
-                # 바운딩 박스 계산
-                y_indices, x_indices = np.where(mask)
-                
-                if len(x_indices) == 0 or len(y_indices) == 0:
-                    continue
-                
-                x_min = np.min(x_indices)
-                x_max = np.max(x_indices)
-                y_min = np.min(y_indices)
-                y_max = np.max(y_indices)
-                
-                # YOLO 형식으로 변환 (중심 x, 중심 y, 너비, 높이, 정규화)
-                x_center = (x_min + x_max) / 2.0 / w
-                y_center = (y_min + y_max) / 2.0 / h
-                bbox_width = (x_max - x_min) / w
-                bbox_height = (y_max - y_min) / h
-                
-                # YOLO 라벨 추가
-                yolo_labels.append(f"{class_id} {x_center:.6f} {y_center:.6f} {bbox_width:.6f} {bbox_height:.6f}")
-        
-        # 라벨 파일 저장
-        with open(label_path, "w") as f:
-            for label in yolo_labels:
-                f.write(label + "\n")
-        
-        print(f"    ✓ Frame {frame_id}: {len(yolo_labels)}개 객체 라벨링")
-        frame_id += 1
+# HDF5 형식으로 저장
+bproc.writer.write_hdf5(
+    output_dir,
+    data,
+    append_to_existing_output=False
+)
 
+# COCO 형식으로 저장 (바운딩 박스 어노테이션)
+bproc.writer.write_coco_annotations(
+    os.path.join(output_dir, "coco_annotations"),
+    instance_segmaps=data["instance_segmaps"],
+    instance_attribute_maps=data["instance_attribute_maps"],
+    colors=data["colors"],
+    color_file_format="PNG",
+    append_to_existing_output=False
+)
+
+end_time = time.time()
+total_time = end_time - start_time
+
+# ====================================
+# 11. 결과 요약
+# ====================================
 print(f"\n{'='*50}")
 print("[데이터 생성 완료]")
 print("="*50)
 
-print(f"✓ 총 생성된 이미지: {frame_id}개")
+total_images = args.num_scenes * args.num_cameras_per_scene
+fps = total_images / total_time if total_time > 0 else 0
+
+print(f"✓ 생성된 씬: {args.num_scenes}개")
+print(f"✓ 생성된 이미지: {total_images}개")
+print(f"✓ 소요 시간: {total_time:.2f}초")
+print(f"✓ 평균 처리 속도: {fps:.2f} images/sec")
 print(f"✓ 저장 위치: {output_dir}")
-print(f"✓ 이미지: {images_dir}")
-print(f"✓ 라벨: {labels_dir}")
+
+# 생성된 파일 통계
+if os.path.exists(output_dir):
+    hdf5_files = glob.glob(os.path.join(output_dir, "*.hdf5"))
+    coco_dir = os.path.join(output_dir, "coco_annotations")
+    
+    print(f"\n[생성된 파일]")
+    print(f"  - HDF5 파일: {len(hdf5_files)}개")
+    
+    if os.path.exists(coco_dir):
+        coco_images = glob.glob(os.path.join(coco_dir, "*.png"))
+        coco_json = glob.glob(os.path.join(coco_dir, "*.json"))
+        print(f"  - COCO 이미지: {len(coco_images)}개")
+        print(f"  - COCO JSON: {len(coco_json)}개")
 
 # ====================================
-# 9. 데이터셋 분할 (train/val)
-# ====================================
-print("\n[데이터셋 분할 생성 중...]")
-
-# train/val 분할 (80:20)
-image_files = sorted(images_dir.glob("*.png"))
-num_images = len(image_files)
-num_train = int(num_images * 0.8)
-
-train_files = image_files[:num_train]
-val_files = image_files[num_train:]
-
-# train.txt 생성
-with open(output_dir / "train.txt", "w") as f:
-    for img_file in train_files:
-        f.write(f"{img_file}\n")
-
-# val.txt 생성
-with open(output_dir / "val.txt", "w") as f:
-    for img_file in val_files:
-        f.write(f"{img_file}\n")
-
-print(f"✓ Train: {len(train_files)}개")
-print(f"✓ Val: {len(val_files)}개")
-
-# ====================================
-# 10. YOLO 설정 파일 생성
-# ====================================
-print("\n[YOLO 설정 파일 생성 중...]")
-
-yaml_content = f"""# YOLO Dataset Configuration
-path: {output_dir.absolute()}
-train: train.txt
-val: val.txt
-
-# Classes
-nc: {len(class_names)}
-names: {class_names}
-"""
-
-with open(output_dir / "dataset.yaml", "w") as f:
-    f.write(yaml_content)
-
-print(f"✓ dataset.yaml 생성 완료")
-
-# ====================================
-# 11. 학습 포인트 요약
+# 12. 학습 포인트 요약
 # ====================================
 print(f"\n{'='*50}")
-print("[학습 포인트 요약]")
+print("[BlenderProc 고급 학습 포인트 요약]")
 print("="*50)
 
 print(f"""
-✓ BlenderProc 주요 기능:
-  1. BOP 데이터셋 로더 활용 (YCB-V)
-  2. 도메인 랜덤화 (객체 위치, 회전, 조명, 배경)
-  3. 다중 카메라 뷰포인트 샘플링
-  4. Instance Segmentation 기반 바운딩 박스 추출
-  5. YOLO 형식 데이터셋 생성
+✓ 고급 BlenderProc 기능:
+  1. 다중 카메라 시스템 ({args.num_cameras_per_scene}개 뷰포인트)
+  2. YCB 객체 활용 (OBJ 형식)
+  3. 물리 시뮬레이션 기반 배치
+  4. 3-point 조명 시스템
+  5. HDF5 + COCO 형식 출력
 
-✓ 도메인 랜덤화 요소:
-  - 객체 개수 (3-6개)
-  - 객체 위치와 회전
-  - 조명 강도와 위치
-  - 배경 색상
-  - 카메라 뷰포인트
+✓ 고급 도메인 랜덤화:
+  - 객체 위치/회전 랜덤화
+  - 물리 기반 자연스러운 배치
+  - 조명 강도/방향 변화
+  - 테이블 색상 변화
+  - 카메라 궤도 랜덤화
 
 ✓ 생성된 데이터:
-  - {frame_id}개 RGB 이미지 (640x640)
-  - YOLO 형식 바운딩 박스 라벨
-  - Train/Val 분할 (80:20)
-  - {len(class_names)}개 클래스
+  - RGB 이미지
+  - 깊이 맵 (Depth)
+  - 법선 맵 (Normals)
+  - 세그멘테이션 맵 (Category/Instance)
+  - COCO 바운딩 박스 어노테이션
+  - 카메라 파라미터
 
-✓ YOLO 학습 방법:
-  1. YOLOv8 설치: pip install ultralytics
-  2. 학습 실행:
-     from ultralytics import YOLO
-     model = YOLO('yolov8n.pt')
-     model.train(data='{output_dir / "dataset.yaml"}', epochs=100)
+✓ Isaac Sim과의 차이점:
+  - BlenderProc는 씬 단위로 작업
+  - 물리 시뮬레이션은 렌더링 전 실행
+  - COCO 형식 자동 변환 지원
+  - HDF5로 통합 저장
 
-✓ Isaac Sim 대비 BlenderProc 장점:
-  - 가볍고 빠른 렌더링
-  - 쉬운 설치와 사용
-  - 다양한 3D 데이터셋 지원 (BOP, ShapeNet, etc.)
-  - 오픈소스 & 무료
+✓ 실무 활용:
+  - 로봇 그래스핑 학습
+  - 객체 검출/세그멘테이션
+  - 6-DoF 포즈 추정
+  - Sim-to-Real 전이 학습
+  - YOLOv8, Mask R-CNN 등 학습
+
+✓ 다음 단계:
+  - visHdf5Files.py로 결과 시각화
+  - vis_coco_annotation.py로 바운딩 박스 확인
+  - 더 많은 YCB 객체 추가
+  - 텍스처 랜덤화 추가
+  - 배경 이미지 합성
 """)
 
-print("\n✓ 프로그램 종료")
+print(f"\n{'='*50}")
+print("✓ 프로그램 완료")
+print("="*50)

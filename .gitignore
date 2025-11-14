@@ -1,6 +1,7 @@
 BlenderProc/
 isaacsim-example/
 output/
+blenderproc_output/
 .venv/
 *.png
 *.jpg
