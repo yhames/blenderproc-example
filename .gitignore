@@ -6,3 +6,11 @@ output/
 *.jpg
 *.jpeg
 *.hdf5
+
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+.DS_Store
+logs/
+*.log
