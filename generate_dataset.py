@@ -144,13 +144,27 @@ for scene_idx in range(args.num_scenes):
     random_color = np.random.uniform([0.3, 0.3, 0.3], [0.8, 0.8, 0.8])
     table_mat.set_principled_shader_value("Base Color", [*random_color, 1.0])
     
-    # 카메라 포즈 (1개 뷰)
+    # 다중 카메라 포즈 (3개 뷰)
+    poi = np.array([0.5, 0.0, 0.45])  # Point of Interest (테이블 중심)
+    
+    # 1. 메인 카메라 - 랜덤 위치
     cam_position = np.random.uniform([0.8, 0.8, 0.6], [1.4, 1.4, 1.2])
-    poi = np.array([0.5, 0.0, 0.45])
     rotation_matrix = bproc.camera.rotation_from_forward_vec(
         poi - cam_position,
         inplane_rot=np.random.uniform(-0.2, 0.2)
     )
+    cam_matrix = bproc.math.build_transformation_mat(cam_position, rotation_matrix)
+    bproc.camera.add_camera_pose(cam_matrix)
+    
+    # 2. 탑뷰 카메라 - 위에서 내려다봄 (고정)
+    cam_position = np.array([0.5, 0.0, 1.5])
+    rotation_matrix = bproc.camera.rotation_from_forward_vec(poi - cam_position)
+    cam_matrix = bproc.math.build_transformation_mat(cam_position, rotation_matrix)
+    bproc.camera.add_camera_pose(cam_matrix)
+    
+    # 3. 사이드 카메라 - 옆에서 바라봄 (고정)
+    cam_position = np.array([1.5, 0.0, 0.6])
+    rotation_matrix = bproc.camera.rotation_from_forward_vec(poi - cam_position)
     cam_matrix = bproc.math.build_transformation_mat(cam_position, rotation_matrix)
     bproc.camera.add_camera_pose(cam_matrix)
     
@@ -167,7 +181,7 @@ for scene_idx in range(args.num_scenes):
         append_to_existing_output=False
     )
     
-    print(f"    ✓ 렌더링 & 저장 완료: scene_{scene_idx:04d}/0.hdf5")
+    print(f"    ✓ 렌더링 & 저장 완료: scene_{scene_idx:04d}/ (3개 카메라 뷰)")
 
 print(f"\n✓ 모든 씬 생성 완료")
 
@@ -180,14 +194,17 @@ print("=" * 60)
 print(f"출력 디렉토리: {output_dir}")
 print(f"생성된 씬: {args.num_scenes}개")
 print(f"\n각 씬마다 다음 데이터가 저장됨:")
-print(f"  - RGB 이미지")
-print(f"  - Instance Segmentation")
-print(f"  - Depth Map")
+print(f"  - RGB 이미지 (3개 카메라)")
+print(f"  - Instance Segmentation (3개 카메라)")
+print(f"  - Depth Map (3개 카메라)")
 print(f"  - Category ID")
 print(f"\n디렉토리 구조:")
 print(f"  {args.output_dir}/")
-print(f"    ├── scene_0000/0.hdf5")
-print(f"    ├── scene_0001/0.hdf5")
+print(f"    ├── scene_0000/")
+print(f"    │   ├── 0.hdf5 (메인 카메라)")
+print(f"    │   ├── 1.hdf5 (탑뷰 카메라)")
+print(f"    │   └── 2.hdf5 (사이드 카메라)")
+print(f"    ├── scene_0001/")
 print(f"    └── ...")
 print("\n다음 단계: extract_bbox.py 실행")
 print("=" * 60)
