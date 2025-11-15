@@ -10,12 +10,38 @@ model = YOLO('yolo11n.pt')
 # 학습 시작
 results = model.train(
     data='dataset/yolo/data.yaml',
-    epochs=10,
-    batch=8,
-    imgsz=512,
+    epochs=50,
+    batch=16,
+    imgsz=640,
     device='cpu',
     project='runs/detect',
-    name='train'
+    name='train',
+    exist_ok=True,
+    patience=20,
+    save=True,
+    plots=True,
+    verbose=True,
+    
+    # 최적화 설정
+    optimizer='auto',
+    lr0=0.01,
+    lrf=0.01,
+    momentum=0.937,
+    weight_decay=0.0005,
+    warmup_epochs=3.0,
+    
+    # 증강 설정
+    hsv_h=0.015,
+    hsv_s=0.7,
+    hsv_v=0.4,
+    degrees=10.0,
+    translate=0.1,
+    scale=0.5,
+    flipud=0.0,
+    fliplr=0.5,
+    mosaic=1.0,
+    mixup=0.0,
+    copy_paste=0.0,
 )
 
 print("\n" + "="*60)
