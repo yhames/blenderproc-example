@@ -6,8 +6,8 @@ import os
 # ======================================================
 # 현재 스크립트 위치 기준으로 경로 설정
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-USD_FOLDER = os.path.join(SCRIPT_DIR, "ycb_usd")      # USD 파일들이 있는 폴더
-OUTPUT_FOLDER = os.path.join(SCRIPT_DIR, "ycb_obj")   # OBJ로 변환될 폴더
+USD_FOLDER = os.path.join(SCRIPT_DIR, "assets", "ycb_usd")      # USD 파일들이 있는 폴더
+OUTPUT_FOLDER = os.path.join(SCRIPT_DIR, "assets", "ycb_obj")   # OBJ로 변환될 폴더
 
 print(f"[INFO] USD 폴더: {USD_FOLDER}")
 print(f"[INFO] 출력 폴더: {OUTPUT_FOLDER}")
