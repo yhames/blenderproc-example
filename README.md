@@ -1,3 +1,28 @@
+# Install
+
+## Requirements
+
+- Blender 4.2+
+- Python 3.11
+
+```bash
+# 가상환경 생성
+python -m venv .venv
+```
+
+```bash
+# 활성화 (Windows PowerShell)
+.\.venv\Scripts\Activate.ps1
+
+# 또는 (Linux/Mac)
+source .venv/bin/activate
+```
+
+```bash
+# 패키지 설치
+pip install -r requirements.txt
+```
+
 # YCB Assets Download
 
 ```bash
