@@ -10,7 +10,8 @@ blenderproc_output/
 *.mtl
 *.obj
 *.usd
-
+*.txt
+dataset/
 .idea/
 .vscode/
 __pycache__/
