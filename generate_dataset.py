@@ -1,7 +1,8 @@
+import blenderproc as bproc
+
 import argparse
 import os
 
-import blenderproc as bproc
 import numpy as np
 
 # 커맨드 라인 인자
