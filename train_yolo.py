@@ -5,7 +5,7 @@ YOLO 학습 스크립트
 from ultralytics import YOLO
 
 # 모델 로드
-model = YOLO('yolov8n.pt')
+model = YOLO('yolo11n.pt')
 
 # 학습 시작
 results = model.train(

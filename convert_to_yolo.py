@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 import os
 import glob
+import random
 from pathlib import Path
 
 # 카테고리 매핑 (BlenderProc category_id → YOLO class_id)
@@ -122,20 +123,27 @@ def process_hdf5_to_yolo(hdf5_path, output_base_dir, scene_name, camera_idx):
         return len(yolo_labels)
 
 
-def convert_all_hdf5_to_yolo(input_dir="dataset/raw", output_dir="dataset/yolo"):
+def convert_all_hdf5_to_yolo(input_dir="dataset/raw", output_dir="dataset/yolo", train_ratio=0.8):
     """
-    모든 HDF5 파일을 YOLO 형식으로 변환
+    모든 HDF5 파일을 YOLO 형식으로 변환 및 train/val 분리
+    
+    Args:
+        input_dir: HDF5 파일이 있는 디렉토리
+        output_dir: YOLO 형식으로 저장할 디렉토리
+        train_ratio: 학습 데이터 비율 (기본 0.8 = 80% train, 20% val)
     """
     print("=" * 60)
-    print("HDF5 → YOLO 형식 변환")
+    print("HDF5 → YOLO 형식 변환 + Train/Val 분리")
     print("=" * 60)
     
     input_path = Path(input_dir)
     output_path = Path(output_dir)
     
     # 출력 디렉토리 생성
-    (output_path / "images").mkdir(parents=True, exist_ok=True)
-    (output_path / "labels").mkdir(parents=True, exist_ok=True)
+    (output_path / "images" / "train").mkdir(parents=True, exist_ok=True)
+    (output_path / "images" / "val").mkdir(parents=True, exist_ok=True)
+    (output_path / "labels" / "train").mkdir(parents=True, exist_ok=True)
+    (output_path / "labels" / "val").mkdir(parents=True, exist_ok=True)
     
     # 모든 HDF5 파일 찾기
     hdf5_files = list(input_path.glob("scene_*/[0-9].hdf5"))
@@ -145,40 +153,88 @@ def convert_all_hdf5_to_yolo(input_dir="dataset/raw", output_dir="dataset/yolo")
         return
     
     print(f"\n발견된 HDF5 파일: {len(hdf5_files)}개")
-    print(f"출력 디렉토리: {output_path}\n")
+    print(f"출력 디렉토리: {output_path}")
+    print(f"Train/Val 비율: {train_ratio*100:.0f}% / {(1-train_ratio)*100:.0f}%\n")
+    
+    # HDF5 파일을 랜덤하게 섞어서 train/val 분리
+    random.seed(42)  # 재현성을 위한 시드 고정
+    random.shuffle(hdf5_files)
+    
+    split_idx = int(len(hdf5_files) * train_ratio)
+    train_files = hdf5_files[:split_idx]
+    val_files = hdf5_files[split_idx:]
     
     total_images = 0
     total_objects = 0
+    train_count = 0
+    val_count = 0
     
-    # 각 HDF5 파일 처리
-    for hdf5_file in sorted(hdf5_files):
-        scene_name = hdf5_file.parent.name  # scene_0000
-        camera_idx = hdf5_file.stem  # 0, 1, 2
+    # Train 파일 처리
+    print("Train 데이터 변환 중...")
+    for hdf5_file in sorted(train_files):
+        scene_name = hdf5_file.parent.name
+        camera_idx = hdf5_file.stem
         
-        num_objects = process_hdf5_to_yolo(
-            hdf5_file, 
-            output_path, 
-            scene_name, 
-            camera_idx
-        )
+        # 임시로 변환
+        temp_output = output_path / "temp"
+        temp_output.mkdir(exist_ok=True)
+        (temp_output / "images").mkdir(exist_ok=True)
+        (temp_output / "labels").mkdir(exist_ok=True)
+        
+        num_objects = process_hdf5_to_yolo(hdf5_file, temp_output, scene_name, camera_idx)
+        
+        # train 폴더로 이동
+        image_file = f"{scene_name}_cam{camera_idx}.png"
+        label_file = f"{scene_name}_cam{camera_idx}.txt"
+        
+        (temp_output / "images" / image_file).rename(output_path / "images" / "train" / image_file)
+        (temp_output / "labels" / label_file).rename(output_path / "labels" / "train" / label_file)
         
         total_images += 1
         total_objects += num_objects
+        train_count += 1
         
-        print(f"✓ {scene_name}/cam{camera_idx}: {num_objects}개 객체")
+        print(f"✓ [TRAIN] {scene_name}/cam{camera_idx}: {num_objects}개 객체")
+    
+    # Val 파일 처리
+    print("\nValidation 데이터 변환 중...")
+    for hdf5_file in sorted(val_files):
+        scene_name = hdf5_file.parent.name
+        camera_idx = hdf5_file.stem
+        
+        num_objects = process_hdf5_to_yolo(hdf5_file, temp_output, scene_name, camera_idx)
+        
+        # val 폴더로 이동
+        image_file = f"{scene_name}_cam{camera_idx}.png"
+        label_file = f"{scene_name}_cam{camera_idx}.txt"
+        
+        (temp_output / "images" / image_file).rename(output_path / "images" / "val" / image_file)
+        (temp_output / "labels" / label_file).rename(output_path / "labels" / "val" / label_file)
+        
+        total_images += 1
+        total_objects += num_objects
+        val_count += 1
+        
+        print(f"✓ [VAL] {scene_name}/cam{camera_idx}: {num_objects}개 객체")
+    
+    # 임시 폴더 삭제
+    import shutil
+    shutil.rmtree(temp_output)
     
     print(f"\n{'='*60}")
     print("변환 완료!")
     print("=" * 60)
     print(f"총 이미지: {total_images}개")
+    print(f"  - Train: {train_count}개 ({train_count/total_images*100:.1f}%)")
+    print(f"  - Val: {val_count}개 ({val_count/total_images*100:.1f}%)")
     print(f"총 객체: {total_objects}개")
     print(f"평균 객체/이미지: {total_objects/total_images:.1f}개\n")
     
     # data.yaml 생성
     yaml_content = f"""# YOLO Dataset Configuration
 path: {output_path.absolute()}
-train: images
-val: images
+train: images/train
+val: images/val
 
 nc: {len(CLASS_NAMES)}
 names: {CLASS_NAMES}
@@ -193,19 +249,16 @@ names: {CLASS_NAMES}
     print(f"\n디렉토리 구조:")
     print(f"  {output_dir}/")
     print(f"    ├── images/")
-    print(f"    │   ├── scene_0000_cam0.png")
-    print(f"    │   ├── scene_0000_cam1.png")
-    print(f"    │   └── ...")
+    print(f"    │   ├── train/ ({train_count}개)")
+    print(f"    │   └── val/ ({val_count}개)")
     print(f"    ├── labels/")
-    print(f"    │   ├── scene_0000_cam0.txt")
-    print(f"    │   ├── scene_0000_cam1.txt")
-    print(f"    │   └── ...")
+    print(f"    │   ├── train/")
+    print(f"    │   └── val/")
     print(f"    └── data.yaml")
     
     print(f"\n다음 단계:")
-    print(f"  1. Train/Val 분리 (선택)")
-    print(f"  2. YOLO 학습:")
-    print(f"     yolo task=detect mode=train model=yolov8n.pt data={yaml_path} epochs=100")
+    print(f"  YOLO 학습:")
+    print(f"     python train_yolo.py")
     print("=" * 60)
 
 
