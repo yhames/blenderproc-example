@@ -20,7 +20,7 @@ curl -o assets/ycb_usd/005_tomato_soup_can.usd https://omniverse-content-product
 blender --background --python usd_to_obj.py
 ```
 
-> Result files will be generated in `assets/ycb_obj/*.[obj, mtl]`
+> The result files will be generated in `assets/ycb_obj/{*.obj, *.mtl}`.
 
 # BlenderProc Dataset Generation
 
