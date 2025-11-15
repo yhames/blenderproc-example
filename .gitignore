@@ -4,6 +4,7 @@ isaacsim-example/
 output/
 blenderproc_output/
 dataset/
+runs/
 
 *.png
 *.jpg
@@ -15,6 +16,7 @@ dataset/
 *.txt
 *.log
 *.pyc
+*.pt
 
 .DS_Store
 
